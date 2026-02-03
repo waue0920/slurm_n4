@@ -1,0 +1,7 @@
+Mmaster is gn1103
+Multi nodes are gn1103 gn1104
+srun  torchrun --nproc_per_node 2 --nnodes 4     --master_addr gn1103 --master_port 6777  train.py
+Mmaster is gn1103
+Multi nodes are gn1103 gn1104
+Mmaster is gn1103
+Multi nodes are gn1103 gn1104

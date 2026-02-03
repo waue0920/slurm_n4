@@ -1,0 +1,37 @@
+Bootstrap: docker
+From: nvcr.io/nvidia/pytorch:23.06-py3
+
+%post
+    apt-get update && apt-get install -y \
+        wget \
+        git \
+        vim \
+        build-essential \
+        libssl-dev \
+        libffi-dev \
+        zip \
+        htop \
+        screen \
+        libgl1-mesa-glx \
+        libc6
+
+    rm -rf /usr/local/lib/python3.10/dist-packages/cv2
+    pip install --upgrade pip
+    pip install gitpython thop seaborn albumentations 
+    pip install opencv-python-headless==4.8.0.74 opencv-python==4.8.0.74
+    pip install ipython gitpython tqdm tensorboard pycocotools>=2.0
+    pip install pillow==9.5.0 --upgrade-strategy only-if-needed
+    pip install wandb 
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+
+%environment
+    export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+
+%labels
+    Maintainer "wychen <wychen@narlabs.org.tw>"
+    Version "1.0"
+
+%runscript
+    echo "This container provides PyTorch with CUDA 11.5 and NVIDIA NeMo support"
+    exec "$@"

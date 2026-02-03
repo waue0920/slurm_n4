@@ -1,0 +1,62 @@
+#!/bin/bash
+#SBATCH -J Torchrun                   # Job name
+#SBATCH -o slurm-%j.out        # Name of stdout output file (%j expands to jobId)
+#SBATCH --account="GOV109135"        # iService Project id
+#SBATCH --nodes=2                  # Number of nodes
+#SBATCH --gres=gpu:2               # Number of GPUs per node
+#SBATCH --partition=gtest          # gtest,gp1d, gp2d, gp4d
+
+
+
+N_GPUS=2
+NNODES=2
+SIF=/work/TWCC_cntr/pytorch_22.01-py3.sif
+SINGULARITY="singularity run --nv $SIF"
+
+#srun hostname
+MASTER=`/bin/hostname -s`
+srun --mpi=pmix /bin/hostname -s > hosts-tmp
+sort hosts-tmp > hosts-list
+sleep 5
+HOST=($(cat hosts-list))
+
+
+
+MASTER_ADDR=`/bin/hostname -s`
+MASTER_PORT=1234
+
+echo "$MASTER_ADDR $MASTER_PORT" >> $MASTER_ADDR.log
+
+export LAUNCHER0="torchrun \
+    --nproc_per_node $N_GPUS \
+    --nnodes $NNODES --node_rank=0 \
+    --master_addr $MASTER_ADDR --master_port $MASTER_PORT \
+    "
+export LAUNCHER1="torchrun \
+    --nproc_per_node $N_GPUS \
+    --nnodes $NNODES --node_rank=1 \
+    --master_addr $MASTER_ADDR --master_port $MASTER_PORT \
+    "
+export LAUNCHER2="torchrun \
+    --nproc_per_node $N_GPUS \
+    --nnodes $NNODES --node_rank=2 \
+    --master_addr $MASTER_ADDR --master_port $MASTER_PORT \
+    "
+export LAUNCHER3="torchrun \
+    --nproc_per_node $N_GPUS \
+    --nnodes $NNODES --node_rank=3 \
+    --master_addr $MASTER_ADDR --master_port $MASTER_PORT \
+    "
+export CMD=" \
+    env.py 
+    "
+
+if [ $MASTER_ADDR == "$1" ]; then
+    $SINGULARITY $LAUNCHER0 $CMD
+elif [ $MASTER_ADDR == "$2" ]; then
+    $SINGULARITY $LAUNCHER1 $CMD
+elif [ $MASTER_ADDR == "$3" ]; then
+    $SINGULARITY $LAUNCHER2 $CMD
+elif [ $MASTER_ADDR == "$4" ]; then
+    $SINGULARITY $LAUNCHER3 $CMD
+fi

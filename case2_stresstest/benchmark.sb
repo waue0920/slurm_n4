@@ -1,0 +1,49 @@
+#!/bin/bash
+#SBATCH -A GOV115010
+#SBATCH --job-name=stress_8n8g
+#SBATCH --nodes=8
+#SBATCH --gres=gpu:8
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=80
+#SBATCH --partition=h200
+#SBATCH --output=stress_test_%j.log
+#SBATCH --error=stress_test_%j.log
+
+# 載入必要的環境
+module purge
+# 載入 conda 環境
+source $HOME/miniconda3/etc/profile.d/conda.sh
+conda activate fl_gyolo
+
+# 設定程式輸出不緩衝，並增加 NCCL 逾時容忍度
+export PYTHONUNBUFFERED=1
+export NCCL_IB_TIMEOUT=22
+
+# 計算總節點與總 GPU 數
+NNODES=$SLURM_JOB_NUM_NODES
+GPUS_PER_NODE=8
+WORLD_SIZE=$(($NNODES * $GPUS_PER_NODE))
+
+# 獲取 Master Node 位址
+MASTER_ADDR=$(scontrol show hostnames $SLURM_JOB_NODELIST | head -n 1)
+MASTER_PORT=29505
+
+echo "==============================="
+echo "開始執行 8 Node x 8 GPU 壓力測試"
+echo "Master Node: $MASTER_ADDR"
+echo "Total Nodes: $NNODES"
+echo "Total GPUs: $WORLD_SIZE"
+echo "==============================="
+
+# 使用 srun 啟動 torchrun
+# 每節點執行一個 torchrun 實例
+srun torchrun \
+    --nnodes=$NNODES \
+    --nproc_per_node=$GPUS_PER_NODE \
+    --rdzv_id=$SLURM_JOB_ID \
+    --rdzv_backend=c10d \
+    --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT \
+    $HOME/workspace/case2_stresstest/stress_test.py
+
+echo "==============================="
+echo "壓力測試啟動完成！請查看 stress_test_$SLURM_JOB_ID.log 或 wandb 儀表板。"

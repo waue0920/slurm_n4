@@ -1,0 +1,32 @@
+#!/bin/bash
+#SBATCH -J Torchrun                   # Job name
+#SBATCH -o slurm-%j.out        # Name of stdout output file (%j expands to jobId)
+#SBATCH --account="GOV109016"        # iService Project id
+#SBATCH --nodes=1                  # Number of nodes
+#SBATCH --ntasks-per-node=1        # Number of MPI process per node
+#SBATCH --cpus-per-task=1          # Number of CPUs per node
+#SBATCH --gres=gpu:1               # Number of GPUs per node
+#SBATCH --partition=gtest          # gtest,gp1d, gp2d, gp4d
+
+### 宣告 $bin 沒用，先註解
+## bin=`dirname "$0"`
+## bin=`cd "$bin"; pwd`
+## cd $bin;
+
+## user parameter
+#SIF=/home/waue0920/slurm/pytorch_22.01-py3.sif
+SIF=/home/waue0920/slurm/sif/pytorch_22.12-py3.sif
+#PTH_FILE="/home/waue0920/slurm/run3/env.py"
+PTH_FILE="train.py"
+
+## main start
+# ml load
+module purge
+module load singularity
+
+SINGULARITY="singularity run --nv $SIF"
+PTH_RUN="torchrun $PTH_FILE --batch_size 128 --epochs 5 --lr 0.01"
+#echo "srun --mpi=pmix $SINGULARITY $PTH_RUN" >> slurm_srun.out
+#srun --mpi=pmix $SINGULARITY $PTH_RUN
+echo "srun $SINGULARITY $PTH_RUN" >> slurm_srun.out
+srun $SINGULARITY $PTH_RUN

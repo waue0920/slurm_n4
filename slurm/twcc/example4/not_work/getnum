@@ -1,0 +1,32 @@
+#!/bin/bash
+# 獲取Slurm任務分配的所有node列表
+#str=$(scontrol show hostname $SLURM_JOB_NODELIST)
+#str="gn0803 gn0804 gn0810 gn0812"
+str="$(cat hosts-list)"
+echo "$str" >> tmp.log
+
+# 獲取當前node的名稱
+keyword=$(/bin/hostname -s)
+#keyword="gn0812"
+echo "$keyword" >> tmp.log
+
+# 将字符串转换为数组
+IFS=' ' read -r -a array <<< "$str"
+
+# 遍历数组，查找关键字的位置
+position=-1 # 初始化为-1，如果找不到关键字，则保持为-1
+for i in "${!array[@]}"; do
+    if [[ "${array[$i]}" == "$keyword" ]]; then
+        position=$i
+        break
+    fi
+done
+
+# 打印位置
+if [[ $position -ne -1 ]]; then
+    echo "'${keyword}' is in  ${str} : $position" >> tmp.log
+else
+    echo "'${keyword}' is not in ${str}"  >> tmp.log
+fi
+
+echo $position

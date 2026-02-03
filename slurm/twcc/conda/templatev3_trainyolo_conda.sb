@@ -1,0 +1,40 @@
+#!/bin/bash
+#SBATCH --job-name=YOLO9_STDx4
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=waue0920@gmail.com
+#SBATCH --nodes=4
+#SBATCH --cpus-per-task=32
+#SBATCH --gres=gpu:8
+#SBATCH --account=GOV113038
+#SBATCH --partition=gp4d
+#SBATCH --output=slurm-yolov9_SegTrainDual_4node_conda.log
+#SBATCH --error=slurm-yolov9_SegTrainDual_4node_conda.log
+
+### 載入模組
+module purge
+module load singularity
+
+
+### singularity sif & command
+SIF=/work/waue0920/open_access/yolov9-ngc2111-def-20241115.sif
+SINGULARITY="singularity run --nv $SIF"
+
+
+### Global Setting 
+## 透過 export 可以將master node上的參數，帶到各節點中
+MASTER_ADDR=$(scontrol show hostname $SLURM_NODELIST | head -n 1)
+export MASTER_ADDR
+
+
+## twcc 不知為何SLURM_GPUS_ON_NODE 為空, h100 可直接使用系統參數 
+nvidia-smi --list-gpus
+gpu_num=$(nvidia-smi -L | wc -l) # $SLURM_GPUS_ON_NODE
+
+
+### 主程式呼叫
+echo "==============================="
+## --gres=gpu:$gpu_num 至關重要，會影響到 各個節點的 gpu 是否正確被使用
+cmd="srun --gres=gpu:$gpu_num --mpi=pmix $SINGULARITY bash trainyolo_conda.sh" 
+
+echo $cmd
+$cmd

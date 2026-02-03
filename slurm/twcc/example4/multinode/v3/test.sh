@@ -1,0 +1,27 @@
+#!/bin/bash
+#SBATCH -J Torchrun                   # Job name
+#SBATCH -o sbatch-%j.log        # Name of stdout output file (%j expands to jobId)
+#SBATCH --account="GOV109135"        # iService Project id
+#SBATCH --nodes=4                  # Number of nodes
+#SBATCH --partition=gp1d          # gtest,gp1d, gp2d, gp4d
+#SBATCH --cpus-per-task=4          # Number of CPUs per node
+#SBATCH --gpus-per-node=2               # Number of GPUs per node
+#SBATCH --ntasks-per-node=1       # Number of process per node
+
+
+# 啟用SLURM調試
+export SLURM_DEBUG=1
+
+
+NNODES=${SLURM_JOB_NUM_NODES}
+NGPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader |wc -l)
+MASTER_PORT=$(shuf -i 60000-65530 -n 1)
+
+scontrol show hostname $SLURM_JOB_NODELIST > host-list
+HOSTS=($(cat host-list))
+
+echo "srun --mpi=pmix tt-4node ${NNODES} ${NGPUS} ${MASTER_PORT} ${HOSTS[@]}"
+
+srun --mpi=pmix tt-4node ${NNODES} ${NGPUS} ${MASTER_PORT} ${HOSTS[@]}
+
+#srun --mpi=pmix tt-4node ${NNODES} ${NGPUS} ${MASTER_PORT} ${HOST[0]} ${HOST[1]} ${HOST[2]} ${HOST[3]}

@@ -1,0 +1,29 @@
+#!/bin/bash
+#SBATCH -A GOV113054
+#SBATCH -p dev
+#SBATCH -J nuosc
+#SBATCH --nodes=1 --ntasks-per-node=1 --cpus-per-task=96
+#SBATCH --gres=gpu:8
+#SBATCH -t 0-0:10
+
+ml purge
+ml nvhpc-hpcx-cuda12/24.7
+
+export UCX_PROTO_ENABLE=n
+
+#export UCX_TLS=rc,cuda
+
+#SRUN="mpirun" ## -np ${SLURM_NTASKS}"
+#${SRUN}  lstopo-no-graphics
+SRUN="srun --cpu-bind=sockets,v  --mpi=pmix"
+
+#${SRUN} free -h
+#${SRUN} lscpu
+${SRUN} ./0_hello
+
+echo "================="
+${SRUN} ibdev2netdev
+echo "================="
+${SRUN} nvidia-smi topo -m
+
+echo "--- Walltime: ${SECONDS} sec."

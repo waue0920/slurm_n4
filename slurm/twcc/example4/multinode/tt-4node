@@ -1,0 +1,57 @@
+#!/bin/bash
+
+## user para
+SIF=/work/TWCC_cntr/pytorch_22.01-py3.sif
+
+CMD="\
+    train.py --batch_size 128 --epochs 5 --lr 0.01
+    "
+
+
+
+## local para
+
+
+NNODES=$1
+N_GPUS=$2
+MASTER_PORT=$3
+MASTER_ADDR=$4
+
+CUR_HOST=`/bin/hostname -s`
+
+SINGULARITY="singularity run --nv $SIF"
+
+export LAUNCHER0="torchrun\
+    --nproc_per_node $N_GPUS \
+    --nnodes $NNODES --node_rank=0 \
+    --master_addr $MASTER_ADDR --master_port $MASTER_PORT \
+    "
+export LAUNCHER1="torchrun \
+    --nproc_per_node $N_GPUS \
+    --nnodes $NNODES --node_rank=1 \
+    --master_addr $MASTER_ADDR --master_port $MASTER_PORT \
+    "
+export LAUNCHER2="torchrun \
+    --nproc_per_node $N_GPUS \
+    --nnodes $NNODES --node_rank=2 \
+    --master_addr $MASTER_ADDR --master_port $MASTER_PORT \
+    "
+export LAUNCHER3="torchrun \
+    --nproc_per_node $N_GPUS \
+    --nnodes $NNODES --node_rank=3 \
+    --master_addr $MASTER_ADDR --master_port $MASTER_PORT \
+    "
+
+if [ $CUR_HOST == "$4" ]; then
+    echo "$SINGULARITY $LAUNCHER0 $CMD" >> tmp.log
+    $SINGULARITY $LAUNCHER0 $CMD
+elif [ $CUR_HOST == "$5" ]; then
+    echo "$SINGULARITY $LAUNCHER1 $CMD" >> tmp.log
+    $SINGULARITY $LAUNCHER1 $CMD
+elif [ $CUR_HOST == "$6" ]; then
+    echo "$SINGULARITY $LAUNCHER2 $CMD" >> tmp.log
+    $SINGULARITY $LAUNCHER2 $CMD
+elif [ $CUR_HOST == "$7" ]; then
+    echo "$SINGULARITY $LAUNCHER3 $CMD" >> tmp.log
+    $SINGULARITY $LAUNCHER3 $CMD
+fi

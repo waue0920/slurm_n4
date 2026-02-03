@@ -1,0 +1,35 @@
+#!/bin/bash
+## user para
+#SIF=/work/TWCC_cntr/pytorch_22.01-py3.sif
+SIF=/home/waue0920/slurm/sif/pytorch_22.12-py3.sif
+
+CMD="\
+    train.py --batch_size 128 --epochs 5 --lr 0.01
+    "
+
+## local para
+
+NNODES=$1
+N_GPUS=$2
+MASTER_ADDR=$3
+MASTER_PORT=$4
+
+
+CUR_HOST=`/bin/hostname -s`
+SINGULARITY="singularity run --nv $SIF"
+
+scontrol show hostname $SLURM_JOB_NODELIST > host-list
+HOSTS=($(cat host-list))
+
+export LAUNCHER="torchrun \
+    --nproc_per_node $N_GPUS \
+    --nnodes $NNODES --master_addr $MASTER_ADDR --master_port $MASTER_PORT \
+    "
+
+for (( i=0; i<$NNODES; i++ )); do
+    if [ $CUR_HOST == "${HOSTS[$i]}" ]; then
+        echo "$SINGULARITY $LAUNCHER --node_rank=$i $CMD" >> tmp.log
+        $SINGULARITY $LAUNCHER --node_rank=$i $CMD
+        break
+    fi
+done

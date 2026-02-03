@@ -1,0 +1,13 @@
+# --- GPU Stress Test Requirements ---
+# Usage: 
+#   1. conda create -n fl_gyolo python=3.10 -y
+#   2. conda activate fl_gyolo
+#   3. pip install --upgrade-strategy only-if-needed -r requirements.txt
+
+# Core Deep Learning
+torch
+numpy
+
+# Monitoring & Logging
+wandb
+nvidia-ml-py  # Modern replacement for pynvml

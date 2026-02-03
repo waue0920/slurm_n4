@@ -1,0 +1,27 @@
+#!/bin/bash
+#SBATCH -A GOV113054
+#SBATCH -p dev
+#SBATCH -J server_check
+#SBATCH --nodes=4 --ntasks-per-node=1 --cpus-per-task=1
+#SBATCH --gres=gpu:1
+#SBATCH -t 0-0:30
+###SBATCH --nodelist=hgpn[07,09,13,15] 
+#SBATCH --nodelist=hgpn[18-21] 
+#SBATCH --output=slurm-%j.out
+#SBATCH --error=slurm-%j.out
+
+ml purge
+ml nvhpc-hpcx-cuda12/24.7
+
+export UCX_PROTO_ENABLE=n  ## set to N for UCX1.16, see https://github.com/rapidsai/ucx-py/issues/1037
+export NCCL_DEBUG=INFO
+
+SRUN="srun --mpi=pmix"
+SRUN="mpirun"
+
+# Test network connectivity on each node
+echo "Testing network connectivity and bandwidth on allocated nodes..."
+
+# Execute the external network test script on each node
+${SRUN} hostname
+${SRUN} ./network_test.sh

@@ -1,0 +1,7 @@
+*.log
+wandb/
+*.tmp
+results.csv
+__pycache__/
+.ipynb_checkpoints/
+.DS_Store

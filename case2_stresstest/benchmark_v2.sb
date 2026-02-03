@@ -1,0 +1,84 @@
+#!/bin/bash
+#SBATCH -A GOV115010
+#SBATCH --job-name=h200_8n8g
+#SBATCH --nodes=8
+#SBATCH --gres=gpu:8
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=80
+#SBATCH --partition=h200
+#SBATCH --output=%j_h200_8n8g.log
+#SBATCH --error=%j_h200_8n8g.log
+
+
+###
+# * H200 建議配置
+# #SBATCH --gres=gpu:8
+# #SBATCH --cpus-per-task=80
+# #SBATCH --partition=h200
+
+# * GB200 建議配置
+# #SBATCH --gres=gpu:4
+# #SBATCH --cpus-per-task=40
+# #SBATCH --partition=gb200
+###
+
+# H200 壓力測試超參數
+PROJECT="h200_8n8g"
+GPUS_PER_NODE=8
+DURATION=1200      # 測試持續時間 (秒)
+TARGET_GB=120      # 每個 GPU 填充的顯存量 (GB)
+GEMM_SIZE=16384    # 矩陣乘法規模 (Matrix Size)
+NET_SIZE_MB=1024   # NCCL 通訊測試資料量 (MB)
+
+# GB200 壓力測試超參數
+# PROJECT="gb200_16n4g"
+# GPUS_PER_NODE=4
+# 
+# DURATION=1200      # 測試持續時間 (秒)
+# TARGET_GB=170      # 每個 GPU 填充的顯存量 (GB)
+# GEMM_SIZE=20480    # 矩陣乘法規模 (Matrix Size)
+# NET_SIZE_MB=2048   # NCCL 通訊測試資料量 (MB)
+
+
+
+# 載入必要的環境
+module purge
+# 載入 conda 環境
+source $HOME/miniconda3/etc/profile.d/conda.sh
+conda activate fl_gyolo
+
+# 設定程式輸出不緩衝，並增加 NCCL 逾時容忍度
+export PYTHONUNBUFFERED=1
+export NCCL_IB_TIMEOUT=22
+
+# 計算總節點
+NNODES=$SLURM_JOB_NUM_NODES
+WORLD_SIZE=$(($NNODES * $GPUS_PER_NODE))
+
+# 獲取 Master Node 位址
+MASTER_ADDR=$(scontrol show hostnames $SLURM_JOB_NODELIST | head -n 1)
+MASTER_PORT=29505
+
+echo "==============================="
+echo "開始 $PROJECT 執行 $NNODES Node x $GPUS_PER_NODE GPU 壓力測試 "
+echo "Master Node: $MASTER_ADDR"
+echo "Total Nodes: $NNODES"
+echo "Total GPUs: $WORLD_SIZE"
+echo "==============================="
+
+# 使用 srun 啟動 torchrun
+srun torchrun \
+    --nnodes=$NNODES \
+    --nproc_per_node=$GPUS_PER_NODE \
+    --rdzv_id=$SLURM_JOB_ID \
+    --rdzv_backend=c10d \
+    --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT \
+    ./stress_test_v2.py \
+    --project $PROJECT \
+    --duration $DURATION \
+    --target_gb $TARGET_GB \
+    --gemm_size $GEMM_SIZE \
+    --net_size_mb $NET_SIZE_MB
+
+echo "==============================="
+echo "壓力測試啟動完成！請查看 stress_test_$SLURM_JOB_ID.log 或 wandb 儀表板。"

@@ -1,0 +1,49 @@
+#!/bin/bash
+#SBATCH -J Torchrun                   # Job name
+#SBATCH -o sbatch-%j.log        # Name of stdout output file (%j expands to jobId)
+#SBATCH --account="GOV109135"        # iService Project id
+#SBATCH --nodes=4                  # Number of nodes
+#SBATCH --partition=gp1d          # gtest,gp1d, gp2d, gp4d
+#SBATCH --cpus-per-task=4          # Number of CPUs per node
+#SBATCH --gpus-per-node=2               # Number of GPUs per node
+#SBATCH --ntasks-per-node=2       # Number of process per node
+
+
+
+
+
+## user parameter
+#SIF=/home/waue0920/slurm/pytorch_22.01-py3.sif
+SIF=/home/waue0920/slurm/pytorch_22.12-py3.sif
+#PTH_FILE="/home/waue0920/slurm/run3/env.py"
+
+# 啟用SLURM調試
+export SLURM_DEBUG=1
+
+
+#srun hostname
+CURR_HOST=`/bin/hostname -s`
+srun --mpi=pmix /bin/hostname -s > hosts-tmp
+sort hosts-tmp > hosts-list
+sleep 5
+HOST=($(cat hosts-list))
+
+NNODES=${SLURM_JOB_NUM_NODES}
+MASTER_PORT=$(shuf -i 60000-65530 -n 1)
+N_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader |wc -l)
+
+CMD="torchsrun4"
+
+if [ $CURR_HOST == ${HOST[0]} ]; then
+    srun echo "--mpi=pmix $CMD $CURR_HOST ${HOST[1]} ${HOST[2]} ${HOST[3]} $NNODES $N_GPUS $MASTER_PORT" >> tmp.log
+    srun --mpi=pmix $CMD $CURR_HOST ${HOST[1]} ${HOST[2]} ${HOST[3]} $NNODES $N_GPUS $MASTER_PORT
+elif [ $CURR_HOST == ${HOST[1]} ]; then
+    srun echo "--mpi=pmix $CMD $CURR_HOST ${HOST[0]} ${HOST[2]} ${HOST[3]} $NNODES $N_GPUS $MASTER_PORT" >> tmp.log
+    srun --mpi=pmix $CMD $CURR_HOST ${HOST[0]} ${HOST[2]} ${HOST[3]} $NNODES $N_GPUS $MASTER_PORT
+elif [ $CURR_HOST == ${HOST[2]} ]; then
+    srun echo "--mpi=pmix $CMD $CURR_HOST ${HOST[0]} ${HOST[1]} ${HOST[3]} $NNODES $N_GPUS $MASTER_PORT" >> tmp.log
+    srun --mpi=pmix $CMD $CURR_HOST ${HOST[0]} ${HOST[1]} ${HOST[3]} $NNODES $N_GPUS $MASTER_PORT
+elif [ $CURR_HOST == ${HOST[3]} ]; then
+    srun echo "--mpi=pmix $CMD $CURR_HOST ${HOST[0]} ${HOST[1]} ${HOST[2]} $NNODES $N_GPUS $MASTER_PORT" >> tmp.log
+    srun --mpi=pmix $CMD $CURR_HOST ${HOST[0]} ${HOST[1]} ${HOST[2]} $NNODES $N_GPUS $MASTER_PORT
+fi

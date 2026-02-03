@@ -1,0 +1,24 @@
+#!/bin/bash
+#SBATCH -A GOV115010
+#SBATCH --job-name=job_waue
+#SBATCH --output=job_waue_%j.log
+#SBATCH --error=job_waue_%j.log
+#SBATCH --nodes=1
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=4
+#SBATCH --partition=h200
+
+# 載入必要的模組 (根據叢集需求)
+module purge
+
+# 開始記錄
+echo "==============================="
+echo "1. 節點資訊"
+echo "目前執行節點: $(hostname)"
+echo "開始時間: $(date)"
+
+sleep 999999;
+
+echo "==============================="
+echo "任務結束"
+echo "結束時間: $(date)"
