@@ -12,8 +12,8 @@
 # H200 壓力測試超參數
 PROJECT="h200_2n8g_v4"
 GPUS_PER_NODE=8
-DURATION=600      # 測試持續時間 (秒)
-TARGET_GB=120      # 每個 GPU 填充的顯存量 (GB)
+DURATION=120      # 測試持續時間 (秒)
+TARGET_GB=130      # 每個 GPU 填充的顯存量 (GB) H200 總顯存 141GB
 GEMM_SIZE=16384    # 矩陣乘法規模 (Matrix Size)
 NET_SIZE_MB=1024   # NCCL 通訊測試資料量 (MB)
 
