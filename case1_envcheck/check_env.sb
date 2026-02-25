@@ -4,9 +4,9 @@
 #SBATCH --output=check_env_sh.log ## 標準輸出與錯誤輸出同時記錄到此檔案
 #SBATCH --error=check_env_sh.log  ## 標準錯誤輸出記錄同一檔案
 #SBATCH --nodes=2                 ## 請求一個節點
-#SBATCH --gres=gpu:1              ## 請求一張 GPU
-#SBATCH --cpus-per-task=4         ## 單個任務請求 1 個 CPU
-#SBATCH --partition=h200         ## 測試分區
+#SBATCH --gres=gpu:8              ## 請求一張 GPU
+#SBATCH --cpus-per-task=80         ## 單個任務請求 1 個 CPU
+#SBATCH --partition=normal         ##  normal / dev
 
 
 # 模組載入 (根據叢集需求)
@@ -34,6 +34,7 @@ echo ""
 echo "可用 GPU 檢查 (nvidia-smi)"
 nvidia-smi --list-gpus
 
+sleep 100;
 
 echo "==============================="
 # 執行 `env.sh`，將環境資訊記錄到 log

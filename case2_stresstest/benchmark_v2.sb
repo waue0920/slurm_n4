@@ -73,7 +73,7 @@ srun torchrun \
     --rdzv_id=$SLURM_JOB_ID \
     --rdzv_backend=c10d \
     --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT \
-    ./stress_test_v2.py \
+    ./stress_test_v3.py \
     --project $PROJECT \
     --duration $DURATION \
     --target_gb $TARGET_GB \

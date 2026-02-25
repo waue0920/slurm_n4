@@ -17,6 +17,10 @@ def parse_args():
     parser.add_argument("--gemm_size", type=int, default=16384, help="Matrix size for GEMM test")
     parser.add_argument("--net_size_mb", type=int, default=1024, help="Data size for NCCL test in MB")
     parser.add_argument("--report_interval_loops", type=int, default=10, help="Interval in loops to report interim results (default: 10, approx 1 min)")
+    # 新增路徑參數，避免寫死使用者帳號
+    parser.add_argument("--home_dir", type=str, default=os.path.expanduser("~"), help="Directory for Home NFS test")
+    default_work = os.path.join("/work", os.environ.get("USER", "waue0920"))
+    parser.add_argument("--work_dir", type=str, default=default_work, help="Directory for Work NFS test")
     return parser.parse_args()
 
 def get_gpu_stats():
@@ -83,7 +87,7 @@ def test_network_bw(size_mb):
     bw = (num_elements * 4 * iters) / (end - start) / 1e9 
     return bw
 
-def test_disk_io():
+def test_disk_io(home_dir, work_dir):
     """
     磁碟 I/O 壓力測試函數
     """
@@ -91,47 +95,65 @@ def test_disk_io():
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
     tensor = torch.randn(1024, 1024, 128) # ~512MB
     
+    # 加入 PID 以防止多個作業同時執行時，發生檔名衝突 (例如兩個作業都有 Rank 0)
+    pid = os.getpid()
+
     # 1. 本地 SSD
     local_tmp_dir = "/tmp/stress_test"
-    os.makedirs(local_tmp_dir, exist_ok=True)
-    local_fn = os.path.join(local_tmp_dir, f"local_rank_{rank}.tmp")
-    time.sleep(local_rank * 0.05)
+    local_fn = os.path.join(local_tmp_dir, f"local_rank_{rank}_{pid}.tmp")
+    ssd_w, ssd_r = 0.0, 0.0
     
-    s = time.time()
-    torch.save(tensor, local_fn)
-    ssd_w = (tensor.nelement() * 4) / (time.time() - s) / 1e6
-    s = time.time()
-    _ = torch.load(local_fn)
-    ssd_r = (tensor.nelement() * 4) / (time.time() - s) / 1e6
-    if os.path.exists(local_fn): os.remove(local_fn)
+    try:
+        os.makedirs(local_tmp_dir, exist_ok=True)
+        time.sleep(local_rank * 0.05)
+        
+        s = time.time()
+        torch.save(tensor, local_fn)
+        ssd_w = (tensor.nelement() * 4) / (time.time() - s) / 1e6
+        s = time.time()
+        _ = torch.load(local_fn)
+        ssd_r = (tensor.nelement() * 4) / (time.time() - s) / 1e6
+    except Exception:
+        pass
+    finally:
+        # 確保發生錯誤也能清理檔案
+        if os.path.exists(local_fn): os.remove(local_fn)
 
     # 2. NFS 測試 (限 Local Rank 0)
     home_w, home_r = 0.0, 0.0
     work_w, work_r = 0.0, 0.0
     
     if local_rank == 0:
-        home_fn = f"/home/waue0920/stress_home_{rank}.tmp"
+        # 使用參數傳入的路徑，加上 PID 避免衝突
+        home_fn = os.path.join(home_dir, f"stress_home_{rank}_{pid}.tmp")
         try:
+            # 確保目錄存在
+            os.makedirs(home_dir, exist_ok=True)
             s = time.time()
             torch.save(tensor, home_fn)
             home_w = (tensor.nelement() * 4) / (time.time() - s) / 1e6
             s = time.time()
             _ = torch.load(home_fn)
             home_r = (tensor.nelement() * 4) / (time.time() - s) / 1e6
+        except Exception: 
+            pass
+        finally:
             if os.path.exists(home_fn): os.remove(home_fn)
-        except Exception: pass
 
-        work_fn = f"/work/waue0920/stress_work_{rank}.tmp"
+        # 使用參數傳入的路徑，加上 PID 避免衝突
+        work_fn = os.path.join(work_dir, f"stress_work_{rank}_{pid}.tmp")
         try:
-            os.makedirs("/work/waue0920", exist_ok=True)
+            os.makedirs(work_dir, exist_ok=True)
             s = time.time()
             torch.save(tensor, work_fn)
             work_w = (tensor.nelement() * 4) / (time.time() - s) / 1e6
             s = time.time()
             _ = torch.load(work_fn)
             work_r = (tensor.nelement() * 4) / (time.time() - s) / 1e6
+        except Exception: 
+            pass
+        finally:
             if os.path.exists(work_fn): os.remove(work_fn)
-        except Exception: pass
             
     return ssd_w, ssd_r, home_w, home_r, work_w, work_r
 
@@ -175,6 +197,9 @@ def main():
     dist.init_process_group(backend='nccl')
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
     rank = dist.get_rank()
+    
+    # 動態取得 local_world_size，確保 NFS 吞吐量計算正確
+    local_world_size = torch.cuda.device_count()
     world_size = dist.get_world_size()
     torch.cuda.set_device(local_rank)
     
@@ -192,9 +217,21 @@ def main():
         wandb.config.update(vars(args))
 
     loop_count = 0
-    while time.time() - start_time < args.duration:
+    # 採用統一廣播終止信號，防止各節點因時鐘微小偏差導致的「收尾死鎖」
+    stop_signal = torch.tensor([0], dtype=torch.int).to(device=torch.device('cuda', local_rank))
+    
+    while True:
         loop_count += 1
         
+        # 由 Rank 0 檢查時間並廣播狀態
+        if rank == 0:
+            if time.time() - start_time >= args.duration:
+                stop_signal[0] = 1
+        dist.broadcast(stop_signal, src=0)
+        
+        if stop_signal[0] == 1:
+            break
+            
         # 1. 執行運算並立即取樣 GPU 狀態 (確保抓到滿載數據)
         tflops = test_gpu_efficiency(args.gemm_size)
         # 取樣第一次 GPU 狀態 (針對運算壓力)
@@ -206,7 +243,8 @@ def main():
         temp2, pwr2, util2, mem2 = get_gpu_stats()
         
         # 3. 執行磁碟 I/O (通常較慢，會導致 GPU 降溫)
-        ssd_w, ssd_r, home_w, home_r, work_w, work_r = test_disk_io()
+        # 傳入參數中的路徑
+        ssd_w, ssd_r, home_w, home_r, work_w, work_r = test_disk_io(args.home_dir, args.work_dir)
         
         # 綜合彙整本次迴圈數據
         # 取兩次負載取樣的最大值，以反映真實壓測強度
@@ -222,8 +260,8 @@ def main():
         dist.all_reduce(current_metrics_tensor, op=dist.ReduceOp.SUM)
         
         if rank == 0:
-            local_world_size = int(os.environ.get("LOCAL_WORLD_SIZE", 8))
-            num_nodes = world_size // local_world_size
+            # 計算節點數，用於 NFS 平均值還原
+            num_nodes = max(1, world_size // local_world_size)
             wandb.log({
                 "loop": loop_count,
                 "iter_gpu_tflops": current_metrics_tensor[0].item() / world_size,
@@ -246,8 +284,7 @@ def main():
             global_avgs = local_avgs_tensor / world_size
             
             if rank == 0:
-                local_world_size = int(os.environ.get("LOCAL_WORLD_SIZE", 8))
-                num_nodes = world_size // local_world_size
+                num_nodes = max(1, world_size // local_world_size)
                 interim_metrics = {
                     "GPU Compute (TFLOPS)": global_avgs[0].item(),
                     "Network Bandwidth (GB/s)": global_avgs[1].item(),
@@ -271,8 +308,7 @@ def main():
     global_final_avgs = local_final_tensor / world_size
     
     if rank == 0:
-        local_world_size = int(os.environ.get("LOCAL_WORLD_SIZE", 8))
-        num_nodes = world_size // local_world_size
+        num_nodes = max(1, world_size // local_world_size)
         final_metrics = {
             "GPU Compute (TFLOPS)": global_final_avgs[0].item(),
             "Network Bandwidth (GB/s)": global_final_avgs[1].item(),
