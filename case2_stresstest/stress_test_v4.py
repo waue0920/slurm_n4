@@ -237,19 +237,33 @@ def save_to_csv(metrics, filename="results.csv"):
         if 'timestamp' not in metrics:
             metrics['timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
-        writer.writerow(metrics)
+        # 四捨五入到小數後 2 位，只處理數字欄位
+        rounded = {
+            k: round(v, 2) if isinstance(v, float) else v
+            for k, v in metrics.items()
+        }
+        writer.writerow(rounded)
 
 def main():
     args = parse_args()
     
-    dist.init_process_group(backend='nccl')
+    # 必須在 init_process_group 之前設定 CUDA 裝置
+    # NCCL backend 在初始化時就需要知道要使用哪張 GPU
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    num_gpus = torch.cuda.device_count()
+    # Debug: 確認 LOCAL_RANK 與可用 GPU 數量是否吻合
+    print(f"[INIT] PID={os.getpid()} LOCAL_RANK={local_rank}, CUDA device_count={num_gpus}, "
+          f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', 'not set')}", flush=True)
+    # 若 local_rank 超出可見 GPU 範圍，clamp 到最後一個
+    local_rank = min(local_rank, num_gpus - 1)
+    torch.cuda.set_device(local_rank)
+    
+    dist.init_process_group(backend='nccl')
     rank = dist.get_rank()
     
     # 動態取得 local_world_size，確保 NFS 吞吐量計算正確
     local_world_size = torch.cuda.device_count()
     world_size = dist.get_world_size()
-    torch.cuda.set_device(local_rank)
     
     pynvml.nvmlInit()
     _vram_filler = stress_gpu_memory(target_gb=args.target_gb)
@@ -258,12 +272,9 @@ def main():
     history_keys = ["tflops", "net_bw", "ssd_w", "ssd_r", "home_w", "home_r", "work_w", "work_r", "temp", "power", "util", "mem"]
     history = {k: [] for k in history_keys}
 
-    # 收集所有 Rank 的 Hostname 與 local_rank 以便識別是哪張卡
-    # all_gather_object 需在 set_device 之後，且需有支援 CPU group 的 backend
-    # 這裡使用 gloo 可以不依賴 GPU，透過建立獨立 CPU group 來收集字串資料
-    cpu_group = dist.new_group(backend="gloo")
+    # 收集所有 Rank 的 Hostname 與 local_rank (set_device 之後才能呼叫)
     rank_info = [None for _ in range(world_size)]
-    dist.all_gather_object(rank_info, (socket.gethostname(), local_rank), group=cpu_group)
+    dist.all_gather_object(rank_info, (socket.gethostname(), local_rank))
 
     if rank == 0:
         print(f"Starting Stress Test v4: {world_size} GPUs")
