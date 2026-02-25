@@ -1,0 +1,79 @@
+#!/bin/bash
+#SBATCH -A GOV115010
+#SBATCH --job-name=h200_8n8g_v4
+#SBATCH --nodes=2
+#SBATCH --gres=gpu:8
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=80
+#SBATCH --partition=dev
+#SBATCH --output=%j_h200_2n8g_v4.log
+#SBATCH --error=%j_h200_2n8g_v4.log
+
+# H200 壓力測試超參數
+PROJECT="h200_2n8g_v4"
+GPUS_PER_NODE=8
+DURATION=600      # 測試持續時間 (秒)
+TARGET_GB=120      # 每個 GPU 填充的顯存量 (GB)
+GEMM_SIZE=16384    # 矩陣乘法規模 (Matrix Size)
+NET_SIZE_MB=1024   # NCCL 通訊測試資料量 (MB)
+
+# 載入必要的環境
+module purge
+source $HOME/miniconda3/etc/profile.d/conda.sh
+conda activate fl_gyolo
+
+# 設定程式輸出不緩衝，並增加 NCCL 逾時容忍度
+export PYTHONUNBUFFERED=1
+export NCCL_IB_TIMEOUT=22
+
+# 計算總節點
+NNODES=$SLURM_JOB_NUM_NODES
+WORLD_SIZE=$(($NNODES * $GPUS_PER_NODE))
+
+# 獲取 Master Node 位址
+MASTER_ADDR=$(scontrol show hostnames $SLURM_JOB_NODELIST | head -n 1)
+MASTER_PORT=29505
+
+echo "==============================="
+echo "開始 $PROJECT 執行 $NNODES Node x $GPUS_PER_NODE GPU 壓力測試 (v4)"
+echo "Master Node: $MASTER_ADDR"
+echo "Total Nodes: $NNODES"
+# 捕捉提交任務時的絕對路徑 (使用 shell 語法 pwd)
+BASE_DIR=$(pwd)
+
+# 為了確保在計算節點也能找到檔案，我們判斷腳本所在的正確路徑
+if [ -f "${BASE_DIR}/stress_test_v4.py" ]; then
+    PY_SCRIPT="${BASE_DIR}/stress_test_v4.py"
+elif [ -f "${BASE_DIR}/case2_stresstest/stress_test_v4.py" ]; then
+    PY_SCRIPT="${BASE_DIR}/case2_stresstest/stress_test_v4.py"
+else
+    # 備用：如果都找不到，嘗試由腳本自身位置判斷 (雖然在 Slurm 下可能失效)
+    PY_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")"; pwd)/stress_test_v4.py"
+fi
+
+echo "Detected Python script at: ${PY_SCRIPT}"
+echo "Total GPUs: $WORLD_SIZE"
+echo "==============================="
+
+# 取得腳本所在目錄的絕對路徑
+# SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")"; pwd)
+
+# 切換到腳本目錄執行
+# cd $SCRIPT_DIR
+
+# 使用 srun 啟動 torchrun
+srun torchrun \
+    --nnodes=$NNODES \
+    --nproc_per_node=$GPUS_PER_NODE \
+    --rdzv_id=$SLURM_JOB_ID \
+    --rdzv_backend=c10d \
+    --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT \
+    ${PY_SCRIPT} \
+    --project $PROJECT \
+    --duration $DURATION \
+    --target_gb $TARGET_GB \
+    --gemm_size $GEMM_SIZE \
+    --net_size_mb $NET_SIZE_MB
+
+echo "==============================="
+echo "壓力測試 v4 啟動完成！"
