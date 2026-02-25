@@ -1,4 +1,5 @@
 *.log
+logs/
 wandb/
 *.tmp
 results.csv

@@ -1,8 +1,0 @@
-Will not apply HSTS. The HSTS database must be a regular and non-world-writable file.
-ERROR: could not open HSTS store at '/home/waue0920/.wget-hsts'. HSTS will be disabled.
---2024-12-24 14:27:27--  https://waueazurestoragejpe.blob.core.windows.net/fileupload-index1224?sp=racwdli
-Resolving waueazurestoragejpe.blob.core.windows.net (waueazurestoragejpe.blob.core.windows.net)... 20.60.248.65
-Connecting to waueazurestoragejpe.blob.core.windows.net (waueazurestoragejpe.blob.core.windows.net)|20.60.248.65|:443... connected.
-HTTP request sent, awaiting response... 409 Public access is not permitted on this storage account.
-2024-12-24 14:27:28 ERROR 409: Public access is not permitted on this storage account..
-
