@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -A GOV115010
+#SBATCH -A GOV115010  ## !! 更換成自己的計劃代號 !! 
 #SBATCH --job-name=check_gpu       ## 工作名稱
 #SBATCH --output=check_env_sb.log ## 標準輸出與錯誤輸出同時記錄到此檔案
 #SBATCH --error=check_env_sb.log  ## 標準錯誤輸出記錄同一檔案

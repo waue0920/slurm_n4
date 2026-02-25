@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -A GOV115010
+#SBATCH -A GOV115010  ## !! 更換成自己的計劃代號 !! 
 #SBATCH --job-name=check_gpu       ## 工作名稱
 #SBATCH --output=check_env_sh.log ## 標準輸出與錯誤輸出同時記錄到此檔案
 #SBATCH --error=check_env_sh.log  ## 標準錯誤輸出記錄同一檔案
@@ -13,11 +13,11 @@
 module purge
 
 # 切換到工作目錄
-#WORKDIR=/home/waue0920/yolov9
+#WORKDIR=$HOME/yolov9
 #cd $WORKDIR
 
 # 定義 Singularity 映像檔路徑
-#SIF=/home/waue0920/sif/yolov9-ngc2111-def-20241115.sif
+#SIF=$HOME/sif/yolov9-ngc2111-def-20241115.sif
 #SINGULARITY="singularity run --nv $SIF"
 
 
