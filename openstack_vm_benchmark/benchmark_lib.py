@@ -184,8 +184,8 @@ def main():
         
         # 3. Disk I/O
         disk_w, disk_r = 0.0, 0.0
-        if local_rank == 0:
-            disk_w, disk_r = test_disk_io()
+        # if local_rank == 0:
+        #     disk_w, disk_r = test_disk_io()
             
         # 4. GPU Stats
         temp, pwr, util, vram = get_gpu_stats(handle)
