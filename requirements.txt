@@ -1,13 +1,13 @@
-# --- GPU Stress Test Requirements ---
+# --- N4 Benchmark Toolkit Requirements ---
+# Supports both Slurm Cluster and OpenStack VM environments.
 # Usage: 
-#   1. conda create -n fl_gyolo python=3.10 -y
-#   2. conda activate fl_gyolo
-#   3. pip install --upgrade-strategy only-if-needed -r requirements.txt
+#   pip install -r requirements.txt
 
-# Core Deep Learning
+# Core Deep Learning & Math
 torch
 numpy
 
 # Monitoring & Logging
 wandb
-nvidia-ml-py  # Modern replacement for pynvml
+nvidia-ml-py  # Provides 'pynvml' module for GPU monitoring
+psutil        # System monitoring (used in OpenStack benchmarks)
