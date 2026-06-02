@@ -19,6 +19,7 @@ def parse_args():
     parser.add_argument("--gemm_size", type=int, default=16384, help="Matrix size for GEMM test")
     parser.add_argument("--net_size_mb", type=int, default=1024, help="Data size for NCCL test in MB")
     parser.add_argument("--report_interval", type=int, default=5, help="Report every X loops")
+    parser.add_argument("--offline", action="store_true", help="Run WandB in offline mode")
     return parser.parse_args()
 
 def get_gpu_stats(handle):
@@ -123,6 +124,9 @@ def save_to_csv(metrics, filename="results.csv"):
 def main():
     args = parse_args()
     
+    if args.offline:
+        os.environ["WANDB_MODE"] = "offline"
+
     # Init distributed
     dist.init_process_group(backend='nccl')
     rank = dist.get_rank()
@@ -135,13 +139,28 @@ def main():
     pynvml.nvmlInit()
     handle = pynvml.nvmlDeviceGetHandleByIndex(local_rank)
     
+    # Check VRAM capacity
+    mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+    total_gb = mem_info.total / (1024**3)
+    if args.target_gb > total_gb * 0.95:
+        print(f"[WARNING] Rank {rank}: Requested {args.target_gb}GB is > 95% of total VRAM ({total_gb:.2f}GB). This may cause OOM.")
+
+    # Pre-allocation with explicit error
     _filler = stress_gpu_memory(args.target_gb)
+    if _filler is None and args.target_gb > 0:
+        print(f"[CRITICAL] Rank {rank} failed to allocate {args.target_gb}GB VRAM. This GPU will be idle during the test.")
     
     if rank == 0:
-        wandb.init(project=args.project, name=f"run-{datetime.now().strftime('%Y%m%d-%H%M%S')}")
-        wandb.config.update(vars(args))
+        print(f"[MAIN] Initializing WandB (Mode: {os.environ.get('WANDB_MODE', 'online')})...")
+        try:
+            wandb.init(project=args.project, name=f"run-{datetime.now().strftime('%Y%m%d-%H%M%S')}")
+            wandb.config.update(vars(args))
+        except Exception as e:
+            print(f"[ERROR] WandB init failed: {e}. Continuing without WandB.")
+        
         print(f"[MAIN] Starting benchmark with {world_size} GPUs across {num_nodes} nodes. Reporting every 60 seconds.")
 
+    print(f"[RANK {rank}] Entering main loop...")
     start_time = time.time()
     last_report_time = start_time
     loop_in_minute = 0
@@ -149,7 +168,7 @@ def main():
     # Store history for averaging
     history_keys = ["tflops", "net_bw", "disk_w", "disk_r", "cpu_util", "ram_gb", "temp", "power", "util", "vram"]
     minute_history = {k: [] for k in history_keys}
-    global_history = {k: [] for k in history_keys} # Stores 1-minute global averages on Rank 0
+    global_history = {k: [] for k in history_keys} 
 
     while (time.time() - start_time) < args.duration:
         loop_in_minute += 1
@@ -163,7 +182,7 @@ def main():
         ram_info = psutil.virtual_memory()
         ram_gb = ram_info.used / (1024**3)
         
-        # 3. Disk I/O (Only local rank 0 to avoid overwhelming disk)
+        # 3. Disk I/O
         disk_w, disk_r = 0.0, 0.0
         if local_rank == 0:
             disk_w, disk_r = test_disk_io()
@@ -171,22 +190,18 @@ def main():
         # 4. GPU Stats
         temp, pwr, util, vram = get_gpu_stats(handle)
         
-        # Record locally for this minute
         current_vals = [tflops, net_bw, disk_w, disk_r, cpu_util, ram_gb, temp, pwr, util, vram]
         for k, v in zip(history_keys, current_vals):
             minute_history[k].append(v)
             
         current_time = time.time()
-        # Report every 60 seconds OR at the very end of the test
         if (current_time - last_report_time) >= 60.0 or (current_time - start_time) >= args.duration:
             if len(minute_history["tflops"]) == 0:
                 break
                 
-            # Local average for this minute
             local_minute_avg = [float(np.mean(minute_history[k])) for k in history_keys]
             metrics = torch.tensor(local_minute_avg, device='cuda')
             
-            # This is the ONLY sync point in the 60-second window
             dist.all_reduce(metrics, op=dist.ReduceOp.SUM)
             
             if rank == 0:
@@ -217,28 +232,21 @@ def main():
                     "avg_vram_mb": avg_vram
                 }
                 
-                wandb.log(avg_metrics)
+                try:
+                    wandb.log(avg_metrics)
+                except:
+                    pass
                 save_to_csv(avg_metrics)
                 
                 print(f"[{elapsed_mins} min] Loops/min: {loop_in_minute} | TFLOPS: {avg_tflops:.2f} | Net: {avg_net:.2f} GB/s | Disk W: {avg_dw:.0f} MB/s | CPU: {avg_cpu:.1f}% | Temp: {avg_temp:.1f}C")
                 
-                global_history["tflops"].append(avg_tflops)
-                global_history["net_bw"].append(avg_net)
-                global_history["disk_w"].append(avg_dw)
-                global_history["disk_r"].append(avg_dr)
-                global_history["cpu_util"].append(avg_cpu)
-                global_history["ram_gb"].append(avg_ram)
-                global_history["temp"].append(avg_temp)
-                global_history["power"].append(avg_pwr)
-                global_history["util"].append(avg_util)
-                global_history["vram"].append(avg_vram)
+                for idx, k in enumerate(history_keys):
+                    global_history[k].append(metrics[idx].item() / (world_size if idx not in [2,3] else num_nodes))
 
-            # Reset for next minute
             minute_history = {k: [] for k in history_keys}
             loop_in_minute = 0
             last_report_time = current_time
 
-    # Final summary (Rank 0 only, calculating average across all recorded minutes)
     if rank == 0:
         print("\n" + "="*40)
         print("FINAL RESULTS (AVERAGE ACROSS ALL MINUTES)")
@@ -253,10 +261,16 @@ def main():
             val = float(np.mean(global_history[k])) if len(global_history[k]) > 0 else 0.0
             final_metrics[out_keys[idx]] = val
             print(f"{out_keys[idx]:25}: {val:.2f}")
-            wandb.run.summary[out_keys[idx]] = val
+            try:
+                wandb.run.summary[out_keys[idx]] = val
+            except:
+                pass
             
         print("="*40)
-        wandb.finish()
+        try:
+            wandb.finish()
+        except:
+            pass
 
     pynvml.nvmlShutdown()
     dist.destroy_process_group()

@@ -19,6 +19,7 @@ show_help() {
     echo ""
     echo "Flags:"
     echo "  --local     Run only on the current node (Single-node test)"
+    echo "  --offline   Run WandB in offline mode"
     echo "  --help      Show this help message"
     echo ""
     echo "Example:"
@@ -31,6 +32,7 @@ DURATION=600
 TARGET_GB=80
 MODE="MULTI"
 IS_WORKER=false
+OFFLINE_FLAG=""
 
 # --- Simple Arg Parsing ---
 if [ $# -eq 0 ]; then
@@ -47,6 +49,11 @@ while [[ $# -gt 0 ]]; do
             ;;
         --local)
             MODE="LOCAL"
+            shift
+            ;;
+        --offline)
+            export WANDB_MODE=offline
+            OFFLINE_FLAG="--offline"
             shift
             ;;
         --worker)
@@ -75,7 +82,7 @@ fi
 export WANDB_MODE=${WANDB_MODE:-online}
 export NCCL_IB_DISABLE=0
 export NCCL_SOCKET_IFNAME=ens2 
-export NCCL_DEBUG=INFO
+export NCCL_DEBUG=WARN
 
 # Detect IB devices
 IB_DEVICES=$(ibv_devinfo | grep hca_id | awk '{print $2}' | tr '\n' ',' | sed 's/,$//')
@@ -98,13 +105,13 @@ if [ "$MODE" == "LOCAL" ]; then
     NODE_RANK=0
 fi
 
-echo "[LAUNCH] Mode: $MODE | Rank: $NODE_RANK/$NNODES | Master: $MASTER_ADDR | IB: $NCCL_IB_HCA"
+echo "[LAUNCH] Mode: $MODE | Rank: $NODE_RANK/$NNODES | Master: $MASTER_ADDR | IB: $NCCL_IB_HCA | WandB: $WANDB_MODE"
 
 # --- Remote Launch Logic ---
 if [ "$MODE" == "MULTI" ] && [ "$NODE_RANK" == "0" ] && [ "$IS_WORKER" == "false" ]; then
     for node in "${REMOTE_NODES[@]}"; do
         echo "[LAUNCH] Starting worker on $node..."
-        ssh -o BatchMode=yes $USER@$node "cd $WORKSPACE && ./run_benchmark.sh $DURATION $TARGET_GB --worker" &
+        ssh -o BatchMode=yes $USER@$node "cd $WORKSPACE && ./run_benchmark.sh $DURATION $TARGET_GB --worker $OFFLINE_FLAG" &
     done
     sleep 2
 fi
@@ -116,6 +123,6 @@ torchrun \
     --master_addr=$MASTER_ADDR \
     --master_port=$MASTER_PORT \
     --nproc_per_node=$NPROC_PER_NODE \
-    $SCRIPT_PATH --duration $DURATION --target_gb $TARGET_GB
+    $SCRIPT_PATH --duration $DURATION --target_gb $TARGET_GB $OFFLINE_FLAG
 
 wait

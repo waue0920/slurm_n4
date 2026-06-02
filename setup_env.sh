@@ -28,6 +28,8 @@ if ! command -v conda &> /dev/null; then
     export PATH="$CONDA_PATH/bin:$PATH"
     # Initialize conda for the current shell session
     eval "$("$CONDA_PATH/bin/conda" 'shell.bash' 'hook' 2> /dev/null)"
+    # Make conda permanent for future sessions
+    "$CONDA_PATH/bin/conda" init bash
 else
     echo "Conda is already installed."
 fi
