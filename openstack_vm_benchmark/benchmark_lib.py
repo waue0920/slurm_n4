@@ -480,18 +480,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-on.dump(doc, f, indent=2)
-        print("[MAIN] Saved → result.json  results.csv")
-        if use_wandb:
-            try: wandb.finish()
-            except Exception: pass
-
-    gemm.free()
-    if filler is not None: del filler
-    pynvml.nvmlShutdown()
-    dist.destroy_process_group()
-    print(f"[RANK {rank}] clean exit.")
-
-
-if __name__ == "__main__":
-    main()

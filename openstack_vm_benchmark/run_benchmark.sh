@@ -82,12 +82,14 @@ MY_IP=$(ip -4 addr show ens2 2>/dev/null \
         | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)
 [ -z "$MY_IP" ] && MY_IP=$(hostname -I | awk '{print $1}')
 
-if [ "$MY_IP" == "$MASTER_ADDR" ]; then
-    NODE_RANK=0
-    NNODES=$((1 + ${#REMOTE_NODES[@]}))
-else
-    NODE_RANK=1
-    NNODES=2
+if [ -z "$NODE_RANK" ] || [ -z "$NNODES" ]; then
+    if [ "$MY_IP" == "$MASTER_ADDR" ]; then
+        NODE_RANK=0
+        NNODES=$((1 + ${#REMOTE_NODES[@]}))
+    else
+        NODE_RANK=1
+        NNODES=2
+    fi
 fi
 
 # ── Local-mode overrides ──────────────────────────────────────
