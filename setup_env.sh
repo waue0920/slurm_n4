@@ -14,8 +14,8 @@ ENV_NAME="n4_bench"
 PYTHON_VERSION="3.10"
 
 echo "[1/4] Checking System Dependencies..."
-sudo apt update
-sudo apt install -y python3-dev libibverbs-dev wget curl git
+#sudo apt update
+#sudo apt install -y python3-dev libibverbs-dev wget curl git
 
 echo "[2/4] Checking Miniconda..."
 if ! command -v conda &> /dev/null; then

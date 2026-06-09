@@ -2,7 +2,7 @@
 # run_benchmark.sh  –  Multi-node GPU stress benchmark launcher
 
 # ── Configuration ────────────────────────────────────────────
-MASTER_ADDR="192.168.230.136"
+MASTER_ADDR="vm201"
 REMOTE_NODES=("vm202")
 MASTER_PORT="29500"
 NPROC_PER_NODE=8
@@ -83,7 +83,11 @@ MY_IP=$(ip -4 addr show ens2 2>/dev/null \
 [ -z "$MY_IP" ] && MY_IP=$(hostname -I | awk '{print $1}')
 
 if [ -z "$NODE_RANK" ] || [ -z "$NNODES" ]; then
-    if [ "$MY_IP" == "$MASTER_ADDR" ]; then
+    # Resolve MASTER_ADDR to IP if it is a hostname
+    MASTER_IP=$(getent hosts "$MASTER_ADDR" | awk '{print $1}')
+    [ -z "$MASTER_IP" ] && MASTER_IP="$MASTER_ADDR"
+
+    if [ "$MY_IP" == "$MASTER_ADDR" ] || [ "$(hostname)" == "$MASTER_ADDR" ] || [ "$MY_IP" == "$MASTER_IP" ]; then
         NODE_RANK=0
         NNODES=$((1 + ${#REMOTE_NODES[@]}))
     else
