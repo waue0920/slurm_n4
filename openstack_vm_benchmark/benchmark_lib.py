@@ -36,7 +36,11 @@ def parse_args():
                    help="AllReduce payload in MB (use >=512 to stress IB cross-node)")
     p.add_argument("--report_interval", type=int,   default=60)
     p.add_argument("--offline",         action="store_true")
+    p.add_argument("--no_cpu_stress",    action="store_false", dest="cpu_stress", default=True, help="Disable CPU stress test")
+    p.add_argument("--cpu_cores",        type=int,   default=90, help="Number of CPU cores to stress")
+    p.add_argument("--target_ram_gb",    type=float, default=64.0, help="Target host RAM to allocate/stress in GB")
     return p.parse_args()
+
 
 
 # ─────────────────────────────────────────────────────────────
@@ -217,6 +221,21 @@ def check_stop(rank: int) -> bool:
     return stop.item() > 0.5
 
 
+def cpu_stress_worker(stop_event):
+    import os
+    try:
+        os.nice(19)  # Set lowest scheduling priority so PyTorch/NCCL/NIC threads always preempt CPU stress
+    except Exception:
+        pass
+    import numpy as np
+    # Maximize cache-miss and CPU compute stress by matrix multiplying large matrices
+    size = 1024
+    a = np.random.randn(size, size).astype(np.float32)
+    b = np.random.randn(size, size).astype(np.float32)
+    while not stop_event.is_set():
+        np.dot(a, b)
+
+
 # ─────────────────────────────────────────────────────────────
 def main():
     args = parse_args()
@@ -260,13 +279,49 @@ def main():
     filler = None
     if args.target_gb > 0:
         free_gb = pynvml.nvmlDeviceGetMemoryInfo(handle).free / 1024**3
-        fill_gb = min(args.target_gb, free_gb * 0.80)
+        fill_gb = min(args.target_gb, free_gb * 0.92)
         try:
             filler = torch.zeros(int(fill_gb * 1024**3 / 2),
                                   dtype=torch.float16, device="cuda")
             if rank == 0: print(f"[INFO] VRAM filler: {fill_gb:.1f} GB/GPU\n")
         except Exception as e:
             print(f"[WARN] rank {rank} VRAM filler: {e}")
+
+    # CPU & Host RAM stress setup (ONLY local_rank == 0 per host to prevent 8x over-allocation)
+    ram_block = None
+    cpu_processes = []
+    cpu_stop_event = None
+
+    if local_rank == 0:
+        if args.target_ram_gb > 0:
+            print(f"[INFO] Allocating {args.target_ram_gb:.1f} GB of Host RAM on node local_rank 0...")
+            try:
+                avail_gb = psutil.virtual_memory().available / 1024**3
+                target_ram = args.target_ram_gb
+                if target_ram > avail_gb * 0.9:
+                    print(f"[WARN] Requested RAM ({target_ram:.1f} GB) is close to or exceeds available RAM ({avail_gb:.1f} GB). Capping to 85% of available.")
+                    target_ram = avail_gb * 0.85
+                
+                num_bytes = int(target_ram * 1024**3)
+                ram_block = np.full(num_bytes, 1, dtype=np.uint8)
+                print(f"[INFO] Host RAM filler allocated: {target_ram:.1f} GB committed on this node.")
+            except Exception as e:
+                print(f"[ERROR] Host RAM filler allocation failed: {e}")
+
+        if args.cpu_stress:
+            import multiprocessing
+            print(f"[INFO] Launching {args.cpu_cores} CPU stress worker processes on local_rank 0...")
+            try:
+                ctx = multiprocessing.get_context("spawn")
+                cpu_stop_event = ctx.Event()
+                for i in range(args.cpu_cores):
+                    p = ctx.Process(target=cpu_stress_worker, args=(cpu_stop_event,))
+                    p.daemon = True
+                    p.start()
+                    cpu_processes.append(p)
+                print(f"[INFO] Spawned {len(cpu_processes)} background CPU stress workers successfully.")
+            except Exception as e:
+                print(f"[ERROR] Failed to start CPU stress workers: {e}")
 
     gemm = GemmStress(args.gemm_size)
 
@@ -295,15 +350,24 @@ def main():
     # Rank 0 drives the stop signal; all other ranks obey it.
     # This ensures clean synchronized exit regardless of timing drift.
     while True:
-        # ── Exit check (ALL ranks participate) ────────────────
-        elapsed = time.time() - t_start
-        # Pack stop flag + elapsed into one all_reduce to save a round-trip
-        stop_flag  = 1.0 if (rank == 0 and elapsed >= args.duration) else 0.0
-        ctrl       = torch.tensor([stop_flag], device="cuda")
-        dist.all_reduce(ctrl)          # sum: >0 means rank 0 said stop
-        if ctrl.item() > 0.5:
-            break
+        # ── Exit and Report check (ALL ranks participate) ───────
+        now = time.time()
+        if rank == 0:
+            stop_flag   = 1.0 if (now - t_start >= args.duration) else 0.0
+            report_flag = 1.0 if (now - t_last_rpt >= args.report_interval) else 0.0
+        else:
+            stop_flag   = 0.0
+            report_flag = 0.0
+
+        ctrl = torch.tensor([stop_flag, report_flag], device="cuda")
+        dist.all_reduce(ctrl)          # sum: rank 0's decision shared to all ranks
+        
+        should_stop = ctrl[0].item() > 0.5
+        do_rpt      = ctrl[1].item() > 0.5
         del ctrl
+
+        if should_stop:
+            break
 
         iter_n += 1
 
@@ -349,9 +413,6 @@ def main():
             window[k].append(v)
 
         # ── Report ────────────────────────────────────────────
-        now    = time.time()
-        do_rpt = (now - t_last_rpt >= args.report_interval)
-
         if do_rpt and window["tflops"]:
             try: dist.barrier()
             except Exception as e: print(f"[WARN] rank {rank} barrier: {e}")
@@ -403,7 +464,7 @@ def main():
                     history[k].append(avg[k])
 
             window     = {k: [] for k in KEYS}
-            t_last_rpt = now
+            t_last_rpt = now  # now matches the time.time() used for report evaluation
 
     # ── Final summary ─────────────────────────────────────────
     if rank == 0:
@@ -467,15 +528,39 @@ def main():
         with open("result.json", "w") as f:
             json.dump(doc, f, indent=2)
         print("[MAIN] Saved → result.json  results.csv")
-        if use_wandb:
-            try: wandb.finish()
-            except Exception: pass
 
     gemm.free()
     if filler is not None: del filler
+
+    # Clean up CPU stress processes
+    if cpu_stop_event is not None:
+        try:
+            cpu_stop_event.set()
+            for p in cpu_processes:
+                p.join(timeout=1.0)
+                if p.is_alive():
+                    p.terminate()
+            print(f"[RANK {rank}] Cleaned up CPU stress processes.")
+        except Exception as e:
+            print(f"[WARN] Error during CPU stress cleanup: {e}")
+    if ram_block is not None:
+        del ram_block
+
     pynvml.nvmlShutdown()
-    dist.destroy_process_group()
+    try:
+        dist.destroy_process_group()
+    except Exception:
+        pass
     print(f"[RANK {rank}] clean exit.")
+
+    if rank == 0 and use_wandb:
+        try:
+            wandb.finish()
+        except Exception:
+            pass
+
+    # Force immediate C-level exit to completely bypass PyTorch/CUDA static destructor hangs on exit
+    os._exit(0)
 
 
 if __name__ == "__main__":

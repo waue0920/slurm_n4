@@ -17,14 +17,16 @@ show_help() {
     echo "  DURATION   seconds  (default: 86400 = 24 h)"
     echo "  TARGET_GB  extra VRAM filler per GPU in GB (default: 0)"
     echo ""
-    echo "  --local    single-node only"
-    echo "  --offline  WandB offline mode"
-    echo "  --help     this message"
+    echo "  --local          single-node only"
+    echo "  --offline        WandB offline mode"
+    echo "  --no_cpu_stress  disable background CPU stress (enabled by default)"
+    echo "  --cpu_cores N    number of CPU cores to stress (default: 90)"
+    echo "  --target_ram_gb N target host RAM to allocate/stress in GB (default: 64)"
+    echo "  --help           this message"
     echo ""
     echo "Examples:"
-    echo "  ./run_benchmark.sh 86400 0          # 24h multi-node, no filler"
-    echo "  ./run_benchmark.sh 3600  0          # 1h  multi-node"
-    echo "  ./run_benchmark.sh 120   0 --local  # 2min smoke test"
+    echo "  ./run_benchmark.sh 86400 130        # GPU/CPU/RAM full multi-node test"
+    echo "  ./run_benchmark.sh 120   0 --local  # 2min local smoke test"
 }
 
 # ── Defaults ─────────────────────────────────────────────────
@@ -33,6 +35,9 @@ TARGET_GB=0
 MODE="MULTI"
 IS_WORKER=false
 OFFLINE_FLAG=""
+NO_CPU_STRESS_FLAG=""
+CPU_CORES_VAL=""
+TARGET_RAM_VAL=""
 
 # ── Arg parsing ──────────────────────────────────────────────
 if [ $# -eq 0 ]; then show_help; exit 0; fi
@@ -40,15 +45,29 @@ if [ $# -eq 0 ]; then show_help; exit 0; fi
 ARGS=()
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --help)    show_help; exit 0 ;;
-        --local)   MODE="LOCAL"; shift ;;
-        --offline) export WANDB_MODE=offline; OFFLINE_FLAG="--offline"; shift ;;
-        --worker)  IS_WORKER=true; shift ;;
-        *)         ARGS+=("$1"); shift ;;
+        --help)          show_help; exit 0 ;;
+        --local)         MODE="LOCAL"; shift ;;
+        --offline)       export WANDB_MODE=offline; OFFLINE_FLAG="--offline"; shift ;;
+        --worker)        IS_WORKER=true; shift ;;
+        --no_cpu_stress) NO_CPU_STRESS_FLAG="--no_cpu_stress"; shift ;;
+        --cpu_cores)     CPU_CORES_VAL="$2"; shift 2 ;;
+        --target_ram_gb) TARGET_RAM_VAL="$2"; shift 2 ;;
+        *)               ARGS+=("$1"); shift ;;
     esac
 done
 [ ${#ARGS[@]} -ge 1 ] && DURATION=${ARGS[0]}
 [ ${#ARGS[@]} -ge 2 ] && TARGET_GB=${ARGS[1]}
+
+EXTRA_FLAGS=""
+if [ -n "$NO_CPU_STRESS_FLAG" ]; then
+    EXTRA_FLAGS="$EXTRA_FLAGS --no_cpu_stress"
+fi
+if [ -n "$CPU_CORES_VAL" ]; then
+    EXTRA_FLAGS="$EXTRA_FLAGS --cpu_cores $CPU_CORES_VAL"
+fi
+if [ -n "$TARGET_RAM_VAL" ]; then
+    EXTRA_FLAGS="$EXTRA_FLAGS --target_ram_gb $TARGET_RAM_VAL"
+fi
 
 # ── Conda ────────────────────────────────────────────────────
 CONDA_BASE=$(conda info --base 2>/dev/null || echo "$HOME/miniconda3")
@@ -122,7 +141,7 @@ if [ "$MODE" == "MULTI" ] && [ "$NODE_RANK" == "0" ] && [ "$IS_WORKER" == "false
         # Pass RDZV_ID and node topology info directly into the remote execution environment
         ssh -o BatchMode=yes -o ConnectTimeout=10 \
             $USER@$node \
-            "cd $WORKSPACE && RDZV_ID=$RDZV_ID NODE_RANK=$WORKER_RANK NNODES=$NNODES ./run_benchmark.sh $DURATION $TARGET_GB --worker $OFFLINE_FLAG" &
+            "cd $WORKSPACE && RDZV_ID=$RDZV_ID NODE_RANK=$WORKER_RANK NNODES=$NNODES ./run_benchmark.sh $DURATION $TARGET_GB --worker $OFFLINE_FLAG $EXTRA_FLAGS" &
         WORKER_RANK=$((WORKER_RANK + 1))
     done
     sleep 5   # give workers time to reach torchrun before master connects
@@ -143,7 +162,8 @@ torchrun \
     "$SCRIPT_PATH" \
         --duration   $DURATION \
         --target_gb  $TARGET_GB \
-        $OFFLINE_FLAG
+        $OFFLINE_FLAG \
+        $EXTRA_FLAGS
 
 EXIT=$?
 wait
