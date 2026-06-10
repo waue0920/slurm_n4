@@ -1,173 +1,58 @@
 #!/bin/bash
-# run_benchmark.sh  –  Multi-node GPU stress benchmark launcher
+# ── run_benchmark.sh ──────────────────────────────────────────
+# 自動多主機壓測啟動協調器 (VM 環境一鍵啟動)
 
-# ── Configuration ────────────────────────────────────────────
-MASTER_ADDR="vm201"
-REMOTE_NODES=("vm202")
-MASTER_PORT="29500"
-NPROC_PER_NODE=8
-USER="ubuntu"
+# ── 使用者自訂環境變數 ────────────────────────────────────────────
+MASTER_ADDR="vm201"              # 主節點 IP / Hostname
+REMOTE_NODES=("vm202")           # 遠端 Worker 節點清單
+USER="ubuntu"                    # SSH 使用者名稱
 WORKSPACE="/home/ubuntu/workspace/slurm_n4/openstack_vm_benchmark"
-SCRIPT_PATH="$WORKSPACE/benchmark_lib.py"
+# ─────────────────────────────────────────────────────────────
 
-# ── Help ─────────────────────────────────────────────────────
 show_help() {
     echo "Usage: ./run_benchmark.sh [DURATION] [TARGET_GB] [FLAGS]"
     echo ""
     echo "  DURATION   seconds  (default: 86400 = 24 h)"
     echo "  TARGET_GB  extra VRAM filler per GPU in GB (default: 0)"
     echo ""
-    echo "  --local          single-node only"
-    echo "  --offline        WandB offline mode"
-    echo "  --no_cpu_stress  disable background CPU stress (enabled by default)"
-    echo "  --cpu_cores N    number of CPU cores to stress (default: 90)"
-    echo "  --target_ram_gb N target host RAM to allocate/stress in GB (default: 64)"
-    echo "  --help           this message"
-    echo ""
     echo "Examples:"
     echo "  ./run_benchmark.sh 86400 130        # GPU/CPU/RAM full multi-node test"
-    echo "  ./run_benchmark.sh 120   0 --local  # 2min local smoke test"
+    echo "  ./run_benchmark.sh 120   0          # 2min smoke test"
 }
 
-# ── Defaults ─────────────────────────────────────────────────
-DURATION=86400
-TARGET_GB=0
-MODE="MULTI"
-IS_WORKER=false
-OFFLINE_FLAG=""
-NO_CPU_STRESS_FLAG=""
-CPU_CORES_VAL=""
-TARGET_RAM_VAL=""
+if [ "$1" == "--help" ] || [ "$1" == "-h" ]; then
+    show_help
+    exit 0
+fi
 
-# ── Arg parsing ──────────────────────────────────────────────
-if [ $# -eq 0 ]; then show_help; exit 0; fi
+DURATION=${1:-86400}
+TARGET_GB=${2:-0}
+shift 2 2>/dev/null
 
-ARGS=()
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --help)          show_help; exit 0 ;;
-        --local)         MODE="LOCAL"; shift ;;
-        --offline)       export WANDB_MODE=offline; OFFLINE_FLAG="--offline"; shift ;;
-        --worker)        IS_WORKER=true; shift ;;
-        --no_cpu_stress) NO_CPU_STRESS_FLAG="--no_cpu_stress"; shift ;;
-        --cpu_cores)     CPU_CORES_VAL="$2"; shift 2 ;;
-        --target_ram_gb) TARGET_RAM_VAL="$2"; shift 2 ;;
-        *)               ARGS+=("$1"); shift ;;
-    esac
+echo "[ORCHESTRATOR] Starting benchmark on Master and Worker nodes..."
+echo "               Master Node: $MASTER_ADDR"
+echo "               Worker Nodes: ${REMOTE_NODES[*]}"
+echo "               Duration:     ${DURATION}s"
+echo "               Target GB:    ${TARGET_GB}"
+
+# ── 透過 SSH 啟動遠端 Worker ─────────────────────────────────
+for node in "${REMOTE_NODES[@]}"; do
+    echo "[ORCHESTRATOR] Spawning local_worker_benchmark.sh on $node ..."
+    ssh -o BatchMode=yes -o ConnectTimeout=10 \
+        $USER@$node \
+        "cd $WORKSPACE && ./local_worker_benchmark.sh $DURATION $TARGET_GB $@" &
 done
-[ ${#ARGS[@]} -ge 1 ] && DURATION=${ARGS[0]}
-[ ${#ARGS[@]} -ge 2 ] && TARGET_GB=${ARGS[1]}
 
-EXTRA_FLAGS=""
-if [ -n "$NO_CPU_STRESS_FLAG" ]; then
-    EXTRA_FLAGS="$EXTRA_FLAGS --no_cpu_stress"
-fi
-if [ -n "$CPU_CORES_VAL" ]; then
-    EXTRA_FLAGS="$EXTRA_FLAGS --cpu_cores $CPU_CORES_VAL"
-fi
-if [ -n "$TARGET_RAM_VAL" ]; then
-    EXTRA_FLAGS="$EXTRA_FLAGS --target_ram_gb $TARGET_RAM_VAL"
-fi
+# 給 Worker 啟動並等待 Torchrun 初始化連接埠的時間
+sleep 5
 
-# ── Conda ────────────────────────────────────────────────────
-CONDA_BASE=$(conda info --base 2>/dev/null || echo "$HOME/miniconda3")
-[ -f "$CONDA_BASE/etc/profile.d/conda.sh" ] && {
-    source "$CONDA_BASE/etc/profile.d/conda.sh"
-    conda activate n4_bench
-}
-
-# ── NCCL / IB environment ────────────────────────────────────
-export WANDB_MODE=${WANDB_MODE:-online}
-
-# InfiniBand
-export NCCL_IB_DISABLE=0
-export NCCL_NET="IB"
-#export NCCL_NET_GDR_LEVEL=0
-export NCCL_SOCKET_IFNAME=ens2
-export NCCL_DEBUG=WARN
-
-# Detect IB HCAs
-IB_DEVICES=$(ibv_devinfo 2>/dev/null | grep hca_id | awk '{print $2}' \
-             | tr '\n' ',' | sed 's/,$//')
-if [ -n "$IB_DEVICES" ]; then
-    export NCCL_IB_HCA=$IB_DEVICES
-    echo "[ENV] IB HCAs: $NCCL_IB_HCA"
-else
-    echo "[WARN] No IB devices detected – NCCL will fall back to TCP"
-fi
-
-# ── Node rank detection ───────────────────────────────────────
-MY_IP=$(ip -4 addr show ens2 2>/dev/null \
-        | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)
-[ -z "$MY_IP" ] && MY_IP=$(hostname -I | awk '{print $1}')
-
-if [ -z "$NODE_RANK" ] || [ -z "$NNODES" ]; then
-    # Resolve MASTER_ADDR to IP if it is a hostname
-    MASTER_IP=$(getent hosts "$MASTER_ADDR" | awk '{print $1}')
-    [ -z "$MASTER_IP" ] && MASTER_IP="$MASTER_ADDR"
-
-    if [ "$MY_IP" == "$MASTER_ADDR" ] || [ "$(hostname)" == "$MASTER_ADDR" ] || [ "$MY_IP" == "$MASTER_IP" ]; then
-        NODE_RANK=0
-        NNODES=$((1 + ${#REMOTE_NODES[@]}))
-    else
-        NODE_RANK=1
-        NNODES=2
-    fi
-fi
-
-# ── Local-mode overrides ──────────────────────────────────────
-if [ "$MODE" == "LOCAL" ]; then
-    NNODES=1
-    NODE_RANK=0
-    unset NCCL_NET
-    export NCCL_IB_DISABLE=1
-fi
-
-# ── Unique rendezvous ID (prevents stale rdzv state) ─────────
-# If RDZV_ID is not already set (e.g., by the Master's SSH command), generate it
-if [ -z "$RDZV_ID" ]; then
-    RDZV_ID="bench_$(date +%s)"
-fi
-
-echo "[LAUNCH] Mode=$MODE | Rank=$NODE_RANK/$NNODES | Master=$MASTER_ADDR"
-echo "         IB=${NCCL_IB_HCA:-none} | rdzv_id=$RDZV_ID"
-echo "         Duration=${DURATION}s | TargetGB=${TARGET_GB}"
-
-# ── SSH worker spawn (master only) ───────────────────────────
-if [ "$MODE" == "MULTI" ] && [ "$NODE_RANK" == "0" ] && [ "$IS_WORKER" == "false" ]; then
-    WORKER_RANK=1
-    for node in "${REMOTE_NODES[@]}"; do
-        echo "[LAUNCH] Spawning worker on $node (Rank $WORKER_RANK/$NNODES) …"
-        # Pass RDZV_ID and node topology info directly into the remote execution environment
-        ssh -o BatchMode=yes -o ConnectTimeout=10 \
-            $USER@$node \
-            "cd $WORKSPACE && RDZV_ID=$RDZV_ID NODE_RANK=$WORKER_RANK NNODES=$NNODES ./run_benchmark.sh $DURATION $TARGET_GB --worker $OFFLINE_FLAG $EXTRA_FLAGS" &
-        WORKER_RANK=$((WORKER_RANK + 1))
-    done
-    sleep 5   # give workers time to reach torchrun before master connects
-fi
-
-# ── torchrun ──────────────────────────────────────────────────
-# --rdzv_backend=c10d  →  all ranks must register before ANY rank starts work.
-# This eliminates the "rank 0 runs alone" bug seen in the original script.
-torchrun \
-    --nnodes=$NNODES \
-    --node_rank=$NODE_RANK \
-    --master_addr=$MASTER_ADDR \
-    --master_port=$MASTER_PORT \
-    --nproc_per_node=$NPROC_PER_NODE \
-    --rdzv_backend=c10d \
-    --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT \
-    --rdzv_id=$RDZV_ID \
-    "$SCRIPT_PATH" \
-        --duration   $DURATION \
-        --target_gb  $TARGET_GB \
-        $OFFLINE_FLAG \
-        $EXTRA_FLAGS
+# ── 啟動本地 Master ──────────────────────────────────────────
+echo "[ORCHESTRATOR] Running local_master_benchmark.sh locally..."
+./local_master_benchmark.sh $DURATION $TARGET_GB "$@"
 
 EXIT=$?
 wait
 
-[ $EXIT -eq 0 ] && echo "[DONE] Benchmark finished cleanly." \
-               || echo "[ERROR] torchrun exited $EXIT"
+[ $EXIT -eq 0 ] && echo "[DONE] Orchestrated benchmark finished cleanly." \
+               || echo "[ERROR] Master exited with code $EXIT"
 exit $EXIT

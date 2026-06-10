@@ -36,7 +36,7 @@ def parse_args():
                    help="AllReduce payload in MB (use >=512 to stress IB cross-node)")
     p.add_argument("--report_interval", type=int,   default=60)
     p.add_argument("--offline",         action="store_true")
-    p.add_argument("--no_cpu_stress",    action="store_false", dest="cpu_stress", default=True, help="Disable CPU stress test")
+    p.add_argument("--no_cpu_stress",    action="store_false", dest="cpu_stress", default=False, help="Disable CPU stress test")
     p.add_argument("--cpu_cores",        type=int,   default=90, help="Number of CPU cores to stress")
     p.add_argument("--target_ram_gb",    type=float, default=64.0, help="Target host RAM to allocate/stress in GB")
     return p.parse_args()
@@ -165,25 +165,41 @@ def measure_p2p(rank: int, world_size: int, size_mb: int = 256, iters: int = 5):
 
 
 def measure_disk(mb: int = 512):
-    t      = torch.randn(mb * 1024 * 1024 // 4)
-    nbytes = t.nelement() * 4
-    path   = f"/tmp/bench_{os.getpid()}.tmp"
-    w = r  = 0.0
-    try:
-        t0 = time.perf_counter()
-        torch.save(t, path)
-        fd = os.open(path, os.O_WRONLY); os.fsync(fd); os.close(fd)
-        w  = nbytes / (time.perf_counter() - t0) / 1e6
+    # Disabled by user request to avoid disk stress
+    return 0.0, 0.0
 
-        t0 = time.perf_counter()
-        torch.load(path, weights_only=True)
-        r  = nbytes / (time.perf_counter() - t0) / 1e6
-    except Exception as e:
-        print(f"[WARN] Disk: {e}")
-    finally:
-        if os.path.exists(path): os.remove(path)
-    del t
-    return w, r
+
+def measure_latency(rank: int, world_size: int, iters: int = 20):
+    """
+    Measures network latency (one-way ping-pong time in ms) using a small 4-Byte tensor.
+    """
+    partner = rank ^ 1
+    if partner >= world_size:
+        return 0.0
+
+    buf = torch.ones(1, dtype=torch.float32, device="cuda")
+    dist.barrier(); torch.cuda.synchronize()
+
+    t0 = time.perf_counter()
+    for _ in range(iters):
+        if rank % 2 == 0:
+            req = dist.isend(buf, dst=partner)
+            req.wait()
+            req2 = dist.irecv(buf, src=partner)
+            req2.wait()
+        else:
+            req = dist.irecv(buf, src=partner)
+            req.wait()
+            req2 = dist.isend(buf, dst=partner)
+            req2.wait()
+    torch.cuda.synchronize()
+    elapsed = time.perf_counter() - t0
+
+    del buf
+    # Total one-way trips = 2 * iters
+    latency_ms = (elapsed / (2 * iters)) * 1000.0
+    return latency_ms
+
 
 
 # ─────────────────────────────────────────────────────────────
@@ -192,6 +208,7 @@ CSV_FIELDS = [
     "tflops_bf16",
     "allreduce_algo_GBs", "allreduce_bus_GBs",
     "p2p_GBs",
+    "net_latency_ms",
     "disk_w_MBs", "disk_r_MBs",
     "gpu_util_pct", "gpu_power_w", "gpu_temp_c", "vram_used_GB",
     "cpu_util_pct", "ram_used_GB",
@@ -334,7 +351,7 @@ def main():
         except Exception as e:
             print(f"[WARN] WandB: {e}")
 
-    KEYS    = ["tflops","ar_algo","ar_bus","p2p",
+    KEYS    = ["tflops","ar_algo","ar_bus","p2p","latency",
                "disk_w","disk_r",
                "gpu_util","gpu_pwr","gpu_temp","vram",
                "cpu_util","ram_gb"]
@@ -389,6 +406,12 @@ def main():
         except Exception as e:
             print(f"[WARN] rank {rank} P2P: {e}"); p2p = 0.0
 
+        # 3b. Network Latency Ping-Pong (one-way in ms)
+        try:
+            latency = measure_latency(rank, world_size)
+        except Exception as e:
+            print(f"[WARN] rank {rank} Latency: {e}"); latency = 0.0
+
         # 4. Disk (local_rank 0 only)
         disk_w = disk_r = 0.0
         if local_rank == 0:
@@ -406,7 +429,7 @@ def main():
         ram_gb   = psutil.virtual_memory().used / 1024**3
         temp, pwr, util, vram = get_gpu_stats(handle)
 
-        for k, v in zip(KEYS, [tflops, ar_algo, ar_bus, p2p,
+        for k, v in zip(KEYS, [tflops, ar_algo, ar_bus, p2p, latency,
                                  disk_w, disk_r,
                                  util, pwr, temp, vram,
                                  cpu_util, ram_gb]):
@@ -425,9 +448,10 @@ def main():
             if rank == 0:
                 W   = world_size
                 avg = {k: vec[i].item() / W for i, k in enumerate(KEYS)}
-                avg["p2p"]    = vec[KEYS.index("p2p")].item()    / max(1, W // 2)
-                avg["disk_w"] = vec[KEYS.index("disk_w")].item() / num_nodes
-                avg["disk_r"] = vec[KEYS.index("disk_r")].item() / num_nodes
+                avg["p2p"]     = vec[KEYS.index("p2p")].item()     / max(1, W // 2)
+                avg["latency"] = vec[KEYS.index("latency")].item() / max(1, W // 2)
+                avg["disk_w"]  = vec[KEYS.index("disk_w")].item()  / num_nodes
+                avg["disk_r"]  = vec[KEYS.index("disk_r")].item()  / num_nodes
 
                 elapsed_min = (now - t_start) / 60
                 row = {
@@ -437,6 +461,7 @@ def main():
                     "allreduce_algo_GBs": avg["ar_algo"],
                     "allreduce_bus_GBs":  avg["ar_bus"],
                     "p2p_GBs":            avg["p2p"],
+                    "net_latency_ms":     avg["latency"],
                     "disk_w_MBs":         avg["disk_w"],
                     "disk_r_MBs":         avg["disk_r"],
                     "gpu_util_pct":       avg["gpu_util"],
@@ -452,6 +477,7 @@ def main():
                     f"AR_algo={avg['ar_algo']:6.2f} GB/s  "
                     f"AR_bus={avg['ar_bus']:6.2f} GB/s  "
                     f"P2P={avg['p2p']:5.2f} GB/s  "
+                    f"Latency={avg['latency']:5.3f} ms  "
                     f"GPU%={avg['gpu_util']:3.0f}  "
                     f"Pwr={avg['gpu_pwr']:4.0f}W  "
                     f"Temp={avg['gpu_temp']:3.0f}°C"
@@ -476,6 +502,7 @@ def main():
             "ar_algo":  "AllReduce algo  GB/s  (bytes/time)",
             "ar_bus":   "AllReduce bus   GB/s  (× 2(n-1)/n)",
             "p2p":      "P2P IB          GB/s  (per rank-pair)",
+            "latency":  "Network Latency ms    (one-way ping-pong)",
             "disk_w":   "Disk Write      MB/s",
             "disk_r":   "Disk Read       MB/s",
             "gpu_util": "GPU Util        %     (target: ~99%)",
@@ -517,6 +544,7 @@ def main():
                 "allreduce_algo_GBs": "GB/s raw (bytes / time)",
                 "allreduce_bus_GBs":  "GB/s bus (algo × 2(n-1)/n, nccl-tests standard)",
                 "p2p_GBs":            "GB/s per IB rank-pair (uni-directional avg)",
+                "net_latency_ms":     "ms per rank-pair one-way ping-pong",
             },
             "config":         vars(args),
             "final_averages": {k: final[k] for k in KEYS},
