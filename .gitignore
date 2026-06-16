@@ -3,6 +3,7 @@
 logs/
 *.csv
 results_*.csv
+openstack_vm_benchmark/result.json
 
 # Weights and Biases
 wandb/
