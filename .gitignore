@@ -2,7 +2,7 @@
 *.log
 logs/
 *.csv
-results_*.csv
+result.json
 openstack_vm_benchmark/result.json
 
 # Weights and Biases

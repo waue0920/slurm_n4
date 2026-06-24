@@ -3,8 +3,8 @@
 # 自動多主機壓測啟動協調器 (VM 環境一鍵啟動)
 
 # ── 使用者自訂環境變數 ────────────────────────────────────────────
-MASTER_ADDR="vm201"              # 主節點 IP / Hostname
-REMOTE_NODES=("vm202")           # 遠端 Worker 節點清單
+MASTER_ADDR="vm205"              # 主節點 IP / Hostname
+REMOTE_NODES=("vm206" "vm207" "vm208")           # 遠端 Worker 節點清單
 USER="ubuntu"                    # SSH 使用者名稱
 WORKSPACE="/home/ubuntu/workspace/slurm_n4/openstack_vm_benchmark"
 # ─────────────────────────────────────────────────────────────
@@ -36,11 +36,13 @@ echo "               Duration:     ${DURATION}s"
 echo "               Target GB:    ${TARGET_GB}"
 
 # ── 透過 SSH 啟動遠端 Worker ─────────────────────────────────
+rank=1
 for node in "${REMOTE_NODES[@]}"; do
-    echo "[ORCHESTRATOR] Spawning local_worker_benchmark.sh on $node ..."
+    echo "[ORCHESTRATOR] Spawning local_worker_benchmark.sh on $node (Rank $rank) ..."
     ssh -o BatchMode=yes -o ConnectTimeout=10 \
         $USER@$node \
-        "cd $WORKSPACE && ./local_worker_benchmark.sh $DURATION $TARGET_GB $@" &
+        "cd $WORKSPACE && NODE_RANK=$rank NNODES=4 ./local_worker_benchmark.sh $DURATION $TARGET_GB $@" &
+    rank=$((rank + 1))
 done
 
 # 給 Worker 啟動並等待 Torchrun 初始化連接埠的時間

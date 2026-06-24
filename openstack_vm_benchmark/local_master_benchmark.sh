@@ -3,7 +3,7 @@
 # 手動多主機壓測 - 主節點啟動腳本 (Rank 0)
 
 # ── 使用者自訂環境變數 ────────────────────────────────────────────
-MASTER_ADDR="vm201"              # 主節點 IP / Hostname
+MASTER_ADDR="vm205"              # 主節點 IP / Hostname
 MASTER_PORT="29500"              # PyTorch 通訊埠
 NPROC_PER_NODE=8                 # 每個節點的 GPU 數量
 NCCL_SOCKET_IFNAME="ens2"        # 網路介面名稱 (例如 ens2, ib0, ens2f0np0 等)
@@ -35,7 +35,7 @@ TARGET_GB=${2:-0}
 shift 2 2>/dev/null
 
 # 設定手動多節點變數
-export NNODES=2
+export NNODES=${NNODES:-4}
 export NODE_RANK=0
 export RDZV_ID="bench_${MASTER_ADDR}"
 
@@ -47,6 +47,7 @@ CONDA_BASE=$(conda info --base 2>/dev/null || echo "$HOME/miniconda3")
 }
 
 # ── NCCL / IB environment ────────────────────────────────────
+export PYTHONUNBUFFERED=1
 export WANDB_MODE=${WANDB_MODE:-online}
 export NCCL_IB_DISABLE=0
 export NCCL_NET="IB"
