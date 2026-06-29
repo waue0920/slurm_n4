@@ -5,7 +5,14 @@
 # ── 使用者自訂環境變數 ────────────────────────────────────────────
 MASTER_ADDR="vm205"              # 主節點 IP / Hostname (必須與 Master 相同)
 MASTER_PORT="29500"              # PyTorch 通訊埠
-NPROC_PER_NODE=8                 # 每個節點的 GPU 數量
+# 動態偵測本地端 GPU 數量 (若無 GPU 則預設為 1)
+if command -v nvidia-smi &>/dev/null; then
+    NPROC_PER_NODE=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l)
+else
+    NPROC_PER_NODE=1
+fi
+NPROC_PER_NODE=${NPROC_PER_NODE:-1}
+[ "$NPROC_PER_NODE" -eq 0 ] && NPROC_PER_NODE=1
 NCCL_SOCKET_IFNAME="ens2"        # 網路介面名稱 (例如 ens2, ib0, ens2f0np0 等)
 WORKSPACE="/home/ubuntu/workspace/slurm_n4/openstack_vm_benchmark"
 # ─────────────────────────────────────────────────────────────
@@ -35,7 +42,7 @@ TARGET_GB=${2:-0}
 shift 2 2>/dev/null
 
 # 設定手動多節點變數
-export NNODES=${NNODES:-4}
+export NNODES=${NNODES:-1}
 export NODE_RANK=${NODE_RANK:-1}
 export RDZV_ID="bench_${MASTER_ADDR}"
 
@@ -65,7 +72,7 @@ else
 fi
 
 echo -e "\033[1;36m===================================================================="
-echo -e "[手動工作節點] 啟動工作節點 (Rank 1 / 總共 $NNODES 節點)"
+echo -e "[手動工作節點] 啟動工作節點 (Rank $NODE_RANK / 總共 $NNODES 節點)"
 echo -e "               Master Address: $MASTER_ADDR"
 echo -e "               Rendezvous ID:  $RDZV_ID"
 echo -e "               Interface:      $NCCL_SOCKET_IFNAME"
