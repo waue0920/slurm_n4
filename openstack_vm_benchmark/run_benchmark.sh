@@ -3,8 +3,17 @@
 # 自動多主機壓測啟動協調器 (VM 環境一鍵啟動)
 
 # ── 使用者自訂環境變數 ────────────────────────────────────────────
-MASTER_ADDR="vm205"              # 主節點 IP / Hostname
-REMOTE_NODES=("vm205-1" "vm205-2" "vm205-3" "vm205-4" "vm205-5" "vm205-6" "vm205-7")           # 遠端 Worker 節點清單
+MASTER_ADDR="vm206-1"              # 主節點 IP / Hostname
+#REMOTE_NODES=("vm205-1" "vm205-2" "vm205-3" "vm205-4" "vm205-5" "vm205-6" "vm205-7")           # 遠端 Worker 節點清單
+REMOTE_NODES=(
+  "vm206-2" "vm206-3" "vm206-4" "vm206-5" "vm206-6" "vm206-7" "vm206-8"
+            "vm207-2" "vm207-3" "vm207-4" "vm207-5" "vm207-6" "vm207-7" "vm207-8"
+  "vm208-1" "vm208-2" "vm208-3" "vm208-4" "vm208-5" "vm208-6" "vm208-7" "vm208-8"
+  "vm209-1" "vm209-2" "vm209-3" "vm209-4" "vm209-5" "vm209-6" "vm209-7" "vm209-8"
+  "vm210-1" "vm210-2" "vm210-3" "vm210-4" "vm210-5" "vm210-6" "vm210-7" "vm210-8"
+  "vm211-1" "vm211-2" "vm211-3" "vm211-4" "vm211-5" "vm211-6" "vm211-7" 
+) # vm207-1 的 ib 卡驅動有點問題先略過
+
 USER="ubuntu"                    # SSH 使用者名稱
 WORKSPACE="/home/ubuntu/workspace/slurm_n4/openstack_vm_benchmark"
 # ─────────────────────────────────────────────────────────────
@@ -52,7 +61,7 @@ for node in "${REMOTE_NODES[@]}"; do
     echo "[ORCHESTRATOR] Spawning local_worker_benchmark.sh on $node (Rank $rank) ..."
     ssh -o BatchMode=yes -o ConnectTimeout=10 \
         $USER@$node \
-        "cd $WORKSPACE && NODE_RANK=$rank NNODES=$TOTAL_NODES ./local_worker_benchmark.sh $DURATION $TARGET_GB $@" &
+        "cd $WORKSPACE && MASTER_ADDR=$MASTER_ADDR NODE_RANK=$rank NNODES=$TOTAL_NODES ./local_worker_benchmark.sh $DURATION $TARGET_GB $@" &
     rank=$((rank + 1))
 done
 
@@ -61,7 +70,7 @@ sleep 5
 
 # ── 啟動本地 Master ──────────────────────────────────────────
 echo "[ORCHESTRATOR] Running local_master_benchmark.sh locally..."
-NNODES=$TOTAL_NODES ./local_master_benchmark.sh $DURATION $TARGET_GB "$@"
+MASTER_ADDR=$MASTER_ADDR NNODES=$TOTAL_NODES ./local_master_benchmark.sh $DURATION $TARGET_GB "$@"
 
 EXIT=$?
 wait

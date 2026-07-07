@@ -1,0 +1,18 @@
+#!/bin/bash
+# waue (wei-yu chen) @ 20150316
+
+bin=`dirname "$0"`
+bin=`cd "$bin"; pwd`
+cd $bin;
+
+cmd=$1
+if [ "$1" == "" ];then
+	echo './hacmd <command>'
+	exit
+fi
+
+for line in $(cat ./hosts | grep -v "^#" );do
+	hostname=$line
+	echo "=== $hostname === "
+	ssh -o ConnectTimeout=5 -o ConnectionAttempts=2 $hostname $cmd
+done

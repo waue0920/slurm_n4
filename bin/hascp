@@ -1,0 +1,16 @@
+#!/bin/bash
+# waue (wei-yu chen) @ 20150316
+
+fromfile=$1
+tofile=$2
+if [ "$2" == "" ];then
+        echo './hascp "localfile" "destdir"'
+        exit
+fi
+
+for hostname in $(cat ~/bin/hosts | grep -v "^#" | awk {'print $1'});do
+        if [[ $(echo $line |awk '{ FS = "," } ; { print NF}') == 4 ]];then echo "skip"
+        fi
+        echo "=== $hostname === "
+        scp -o ConnectTimeout=5 -o ConnectionAttempts=2 -r $fromfile $hostname:$tofile
+done

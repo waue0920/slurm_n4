@@ -1,0 +1,32 @@
+#!/bin/bash
+# waue (wei-yu chen) @ 20260318
+# Forked from hascp - Uses rsync with sudo for privileged remote paths
+
+fromfile=$1
+tofile=$2
+
+if [ "$2" == "" ];then
+        echo 'Usage: harsync "localfile" "destdir"'
+        echo 'Example: harsync ./slurm.conf /etc/slurm/slurm.conf'
+        exit
+fi
+
+HOSTS_FILE=~/bin/hosts
+
+for hostname in $(cat $HOSTS_FILE | grep -v "^#" | awk {'print $1'});do
+        if [ -z "$hostname" ]; then continue; fi
+        
+        echo "=== $hostname === "
+        
+        # 使用 rsync 搭配 sudo 同步
+        # -a: 歸檔模式 (保留權限等)
+        # -v: 顯示詳細進度
+        # --rsync-path: 讓遠端主機以 sudo 權限啟動 rsync，以便寫入 /etc/ 等目錄
+        rsync -av -e "ssh -o ConnectTimeout=5 -o ConnectionAttempts=2" --rsync-path="sudo rsync" "$fromfile" "$hostname":"$tofile"
+        
+        if [ $? -eq 0 ]; then
+                echo "Success: $hostname"
+        else
+                echo "FAILED: $hostname"
+        fi
+done

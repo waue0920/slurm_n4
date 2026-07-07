@@ -3,7 +3,7 @@
 # 手動多主機壓測 - 工作節點啟動腳本 (Rank 1)
 
 # ── 使用者自訂環境變數 ────────────────────────────────────────────
-MASTER_ADDR="vm205"              # 主節點 IP / Hostname (必須與 Master 相同)
+MASTER_ADDR="${MASTER_ADDR:-vm205}"              # 主節點 IP / Hostname (必須與 Master 相同)
 MASTER_PORT="29500"              # PyTorch 通訊埠
 # 動態偵測本地端 GPU 數量 (若無 GPU 則預設為 1)
 if command -v nvidia-smi &>/dev/null; then
